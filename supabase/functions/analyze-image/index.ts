@@ -101,7 +101,29 @@ Analyze for:
       throw new Error("No content in response");
     }
 
-    const result: AnalysisResult = JSON.parse(content);
+    // Clean markdown wrappers from LLM response
+    let cleaned = content
+      .replace(/```json\s*/gi, "")
+      .replace(/```\s*/g, "")
+      .trim();
+
+    const jsonStart = cleaned.search(/[\{\[]/);
+    const jsonEnd = cleaned.lastIndexOf('}');
+    if (jsonStart === -1 || jsonEnd === -1) {
+      throw new Error("No valid JSON found in response");
+    }
+    cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+
+    let result: AnalysisResult;
+    try {
+      result = JSON.parse(cleaned);
+    } catch {
+      cleaned = cleaned
+        .replace(/,\s*}/g, "}")
+        .replace(/,\s*]/g, "]")
+        .replace(/[\x00-\x1F\x7F]/g, "");
+      result = JSON.parse(cleaned);
+    }
 
     // Ensure confidence is a number between 0-100
     if (typeof result.confidence === "number") {
