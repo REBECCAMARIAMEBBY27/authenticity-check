@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Scan, RotateCcw, FileText } from "lucide-react";
+import { Shield, Scan, RotateCcw, FileText, Image as ImageIcon, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -22,17 +22,22 @@ const SAMPLE_TEXTS = [
 
 const Index = () => {
   const [text, setText] = useState("");
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzeType, setAnalyzeType] = useState<"text" | "image" | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const analyze = async () => {
+  const analyzeText = async () => {
     if (text.trim().length < 20) {
       toast({ title: "Too short", description: "Please enter at least 20 characters.", variant: "destructive" });
       return;
     }
 
     setIsAnalyzing(true);
+    setAnalyzeType("text");
     setResult(null);
 
     try {
@@ -59,9 +64,65 @@ const Index = () => {
     }
   };
 
+  const analyzeImage = async () => {
+    if (!uploadedImage) {
+      toast({ title: "No image", description: "Please upload an image first.", variant: "destructive" });
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setAnalyzeType("image");
+    setResult(null);
+
+    try {
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-image`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({ imageData: uploadedImage }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || "Analysis failed");
+      }
+
+      const data: AnalysisResult = await resp.json();
+      setResult(data);
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Invalid file", description: "Please upload an image file.", variant: "destructive" });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setUploadedImage(base64);
+      setImagePreview(base64);
+      setResult(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const reset = () => {
     setText("");
+    setUploadedImage(null);
+    setImagePreview(null);
     setResult(null);
+    setAnalyzeType(null);
   };
 
   return (
@@ -96,28 +157,93 @@ const Index = () => {
           </p>
         </motion.div>
 
-        {/* Input area */}
-        <motion.div
-          className="relative mb-6"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          {isAnalyzing && <ScanningOverlay />}
-          <Textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Paste your text here to analyze..."
-            className="min-h-[200px] bg-card border-border font-mono text-sm resize-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 placeholder:text-muted-foreground/40"
-            disabled={isAnalyzing}
-          />
-          <div className="absolute bottom-3 right-3 text-xs font-mono text-muted-foreground/50">
-            {text.length} chars
-          </div>
-        </motion.div>
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6 justify-center">
+          <button
+            onClick={() => { setText(""); setUploadedImage(null); setImagePreview(null); setResult(null); setAnalyzeType(null); }}
+            className={`px-4 py-2 rounded-lg font-mono text-sm transition-all ${
+              !uploadedImage ? "bg-primary text-primary-foreground" : "bg-secondary border border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <FileText className="w-4 h-4 inline mr-2" />
+            Text Analysis
+          </button>
+          <button
+            onClick={() => { setText(""); setUploadedImage(null); setImagePreview(null); setResult(null); setAnalyzeType(null); }}
+            className={`px-4 py-2 rounded-lg font-mono text-sm transition-all ${
+              uploadedImage ? "bg-primary text-primary-foreground" : "bg-secondary border border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <ImageIcon className="w-4 h-4 inline mr-2" />
+            Image Analysis
+          </button>
+        </div>
+
+        {/* Text Input area */}
+        {!uploadedImage && (
+          <motion.div
+            className="relative mb-6"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            {isAnalyzing && analyzeType === "text" && <ScanningOverlay />}
+            <Textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Paste your text here to analyze..."
+              className="min-h-[200px] bg-card border-border font-mono text-sm resize-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 placeholder:text-muted-foreground/40"
+              disabled={isAnalyzing}
+            />
+            <div className="absolute bottom-3 right-3 text-xs font-mono text-muted-foreground/50">
+              {text.length} chars
+            </div>
+          </motion.div>
+        )}
+
+        {/* Image Input area */}
+        {uploadedImage && (
+          <motion.div
+            className="relative mb-6"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            {isAnalyzing && analyzeType === "image" && <ScanningOverlay />}
+            <div className="relative rounded-lg border border-border bg-card overflow-hidden">
+              <img 
+                src={imagePreview || ""} 
+                alt="Uploaded preview" 
+                className="w-full max-h-[300px] object-contain"
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {/* Image Upload area */}
+        {!uploadedImage && (
+          <motion.div
+            className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-8 mb-6 bg-secondary/30 cursor-pointer hover:bg-secondary/50 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              className="hidden"
+            />
+            <Upload className="w-8 h-8 text-primary mb-2" />
+            <p className="text-foreground font-mono text-sm mb-1">Click to upload an image</p>
+            <p className="text-muted-foreground text-xs font-mono">JPG, PNG supported</p>
+          </motion.div>
+        )}
 
         {/* Sample texts */}
-        {!result && !isAnalyzing && (
+        {!result && !isAnalyzing && !uploadedImage && (
           <motion.div
             className="flex flex-wrap gap-2 mb-6 justify-center"
             initial={{ opacity: 0 }}
@@ -141,24 +267,47 @@ const Index = () => {
         {/* Action buttons */}
         <div className="flex justify-center gap-3 mb-10">
           {!result ? (
-            <Button
-              onClick={analyze}
-              disabled={isAnalyzing || text.trim().length < 20}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 font-mono gap-2 px-6"
-              size="lg"
-            >
-              {isAnalyzing ? (
-                <>
-                  <Scan className="w-4 h-4 animate-spin" />
-                  Analyzing...
-                </>
+            <>
+              {!uploadedImage ? (
+                <Button
+                  onClick={analyzeText}
+                  disabled={isAnalyzing || text.trim().length < 20}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 font-mono gap-2 px-6"
+                  size="lg"
+                >
+                  {isAnalyzing && analyzeType === "text" ? (
+                    <>
+                      <Scan className="w-4 h-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Scan className="w-4 h-4" />
+                      Analyze Text
+                    </>
+                  )}
+                </Button>
               ) : (
-                <>
-                  <Scan className="w-4 h-4" />
-                  Analyze Text
-                </>
+                <Button
+                  onClick={analyzeImage}
+                  disabled={isAnalyzing}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 font-mono gap-2 px-6"
+                  size="lg"
+                >
+                  {isAnalyzing && analyzeType === "image" ? (
+                    <>
+                      <Scan className="w-4 h-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Scan className="w-4 h-4" />
+                      Analyze Image
+                    </>
+                  )}
+                </Button>
               )}
-            </Button>
+            </>
           ) : (
             <Button
               onClick={reset}
